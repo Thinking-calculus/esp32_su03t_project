@@ -4,7 +4,13 @@
 #include "SD.h"
 #include "FS.h"
 
+/*
+#include <HardwareSerial.h>
+HardwareSerial SerialPort(2); // use UART2
+*/
+
 #include <string>
+#include <unistd.h>
 
 // sd卡相关引脚
 #define SD_CS 5
@@ -27,6 +33,7 @@
 // audio 全局变量
 Audio audio;
 std::vector<std::string> file_name_list;
+int current_file_index = 0;
 
 // sd 卡初始化
 int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_INIT)
@@ -53,7 +60,7 @@ int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_IN
 void audio_init(int I2S_DOUT_INIT, int I2S_BCLK_INIT, int I2S_LRC_INIT)
 {
   audio.setPinout(I2S_BCLK_INIT, I2S_LRC_INIT, I2S_DOUT_INIT);
-  audio.setVolume(4); // 0...21
+  audio.setVolume(10); // 0...21
 }
 
 // 获取音频文件列表
@@ -99,6 +106,9 @@ void setup()
     delay(10);
   }
 
+  // 初始化串口2
+  Serial2.begin(115200, SERIAL_8N1, 16, 17); // 初始化 Serial1 串口，波特率为 115200，RX 引脚为 16，TX 引脚为 17
+
   // 初始化功放
   audio_init(I2S_DOUT, I2S_BCLK, I2S_LRC);
 
@@ -113,23 +123,99 @@ void setup()
     }
     else
     {
-      Serial.printf("get audio list success,music count:%d", file_name_list.size());
+      Serial.printf("get audio list success,music count:%d\r\n", file_name_list.size());
     }
   }
+}
 
+void play_all_music()
+{
   if (file_name_list.size() > 0)
   {
-    std::string first = file_name_list[0];
-    first="/"+first;
-    audio.connecttoFS(SD,first.c_str());
+    if (current_file_index >= file_name_list.size())
+    {
+      current_file_index = 0; // 循环播放所有音乐
+    }
+    Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+    std::string music_name = file_name_list[current_file_index];
+    music_name = "/" + music_name;
+    audio.connecttoFS(SD, music_name.c_str());
+    current_file_index++;
+  }
+}
+
+void play_selected_music(int index)
+{
+  if (index >= 0 && index < file_name_list.size())
+  {
+    Serial.printf("play music file:%s \r\n", file_name_list[index].c_str());
+    std::string music_name = file_name_list[index];
+    music_name = "/" + music_name;
+    audio.connecttoFS(SD, music_name.c_str());
+  }
+}
+
+// 语音识别解析
+void tts_sovle()
+{
+  if (Serial2.available())
+  {
+    char data = Serial2.read(); // 暂时只接受字符信息
+    Serial.printf("get data(%s) from tts \r\n", data);
+    if (data == '-1')
+    {
+      play_all_music();
+    }
+    else if (data > 0)
+    {
+      play_selected_music(std::stoi(std::string(1, data)));
+    }
   }
 }
 
 void loop()
 {
   audio.loop();
+
   if (audio.isRunning() == false)
   {
-    Serial.println("play eos to file");
+    usleep(10000);
+    if (file_name_list.size() > 0 && audio.isRunning() == false)
+    {
+      if (current_file_index != 0)
+      {
+        Serial.println("play eos to file");
+        Serial2.println("play eos to file");
+      }
+      if (current_file_index >= file_name_list.size())
+      {
+        current_file_index = 0; // 循环播放所有音乐
+      }
+      Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+      Serial2.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+      std::string music_name = file_name_list[current_file_index];
+      music_name = "/" + music_name;
+      audio.connecttoFS(SD, music_name.c_str());
+      current_file_index++;
+    }
+  }
+  if (Serial2.available())
+  {
+    char number = Serial2.read();
+    Serial.println(number);
+    if (number == '0')
+    {
+
+      Serial.println("aaaaaaaaaaaa");
+      Serial2.write("7");
+      Serial.println("7w");
+    }
+    if (number == '1')
+    {
+
+      Serial.println("bbbbbbbbbbb");
+      Serial2.write("6");
+      Serial.println("6w");
+    }
   }
 }
