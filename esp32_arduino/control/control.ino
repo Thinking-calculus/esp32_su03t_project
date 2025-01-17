@@ -26,6 +26,10 @@ HardwareSerial SerialPort(2); // use UART2
 #define FUN_OK 1
 #define FUN_FAIL 0
 
+// 串口通信相关
+#define START_BYTE 0x01
+#define END_BYTE 0x10
+
 // 音乐列表
 #define MAX_FILES 100
 #define MAX_FILENAME_LENGTH 50
@@ -34,6 +38,11 @@ HardwareSerial SerialPort(2); // use UART2
 Audio audio;
 std::vector<std::string> file_name_list;
 int current_file_index = 0;
+
+// 播放流程控制变量
+bool receiving = false;
+std::vector<uint8_t> buffer;
+int music_loop = 0; // -1:顺序播放 1:逆序循环 2:单曲循环
 
 // sd 卡初始化
 int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_INIT)
@@ -128,48 +137,212 @@ void setup()
   }
 }
 
-void play_all_music()
-{
-  if (file_name_list.size() > 0)
-  {
-    if (current_file_index >= file_name_list.size())
-    {
-      current_file_index = 0; // 循环播放所有音乐
-    }
-    Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
-    std::string music_name = file_name_list[current_file_index];
-    music_name = "/" + music_name;
-    audio.connecttoFS(SD, music_name.c_str());
-    current_file_index++;
-  }
-}
+// void play_all_music()
+// {
+//   if (file_name_list.size() > 0)
+//   {
+//     if (current_file_index >= file_name_list.size())
+//     {
+//       current_file_index = 0; // 循环播放所有音乐
+//     }
+//     Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+//     std::string music_name = file_name_list[current_file_index];
+//     music_name = "/" + music_name;
+//     audio.connecttoFS(SD, music_name.c_str());
+//     current_file_index++;
+//   }
+// }
 
-void play_selected_music(int index)
-{
-  if (index >= 0 && index < file_name_list.size())
-  {
-    Serial.printf("play music file:%s \r\n", file_name_list[index].c_str());
-    std::string music_name = file_name_list[index];
-    music_name = "/" + music_name;
-    audio.connecttoFS(SD, music_name.c_str());
-  }
-}
+// void play_selected_music(int index)
+// {
+//   if (index >= 0 && index < file_name_list.size())
+//   {
+//     Serial.printf("play music file:%s \r\n", file_name_list[index].c_str());
+//     std::string music_name = file_name_list[index];
+//     music_name = "/" + music_name;
+//     audio.connecttoFS(SD, music_name.c_str());
+//   }
+// }
 
-// 语音识别解析
-void tts_sovle()
+// // 语音识别解析
+// void tts_sovle()
+// {
+//   if (Serial2.available())
+//   {
+//     char data = Serial2.read(); // 暂时只接受字符信息
+//     Serial.printf("get data(%s) from tts \r\n", data);
+//     if (data == '-1')
+//     {
+//       play_all_music();
+//     }
+//     else if (data > 0)
+//     {
+//       // play_selected_music(std::stoi(std::string(1, data)));
+//     }
+//   }
+// }
+
+void handleData(const std::vector<uint8_t> &data)
 {
-  if (Serial2.available())
+  // // 处理接收到的数据
+  Serial.print("Received data: ");
+  for (uint8_t byte : data)
   {
-    char data = Serial2.read(); // 暂时只接受字符信息
-    Serial.printf("get data(%s) from tts \r\n", data);
-    if (data == '-1')
+    Serial.printf("%02X ", byte);
+  }
+  Serial.println();
+
+  // 判断接收到的数据
+  uint8_t expectedData1[] = {0x00, 0x00};  // 顺序播放
+  uint8_t expectedData2[] = {0x00, 0x02};  // 逆序播放
+  uint8_t expectedData3[] = {0x00, 0x03};  // 下一首
+  uint8_t expectedData4[] = {0x00, 0x04};  // 上一首
+  uint8_t expectedData5[] = {0x00, 0x05};  // 大声一点
+  uint8_t expectedData6[] = {0x00, 0x06};  // 小声一点
+  uint8_t expectedData7[] = {0x00, 0x07};  // 最大声/最大音量
+  uint8_t expectedData8[] = {0x00, 0x08};  // 最小声/最小音量
+  uint8_t expectedData9[] = {0x00, 0x09};  // 暂停播放
+  uint8_t expectedData10[] = {0x00, 0x0A}; // 恢复播放
+  uint8_t expectedData11[] = {0x00, 0x0B}; // 结束播放
+  uint8_t expectedData12[] = {0x00, 0x0C}; // 开始播放
+  uint8_t expectedData13[] = {0x00, 0x0D}; // 单曲循环
+  uint8_t expectedData14[] = {0x00, 0x0E}; // 今天xx天气怎样
+  uint8_t expectedData15[] = {0x00, 0x0F}; // 今天气温是多少
+
+  if (data.size() == sizeof(expectedData1) && memcmp(data.data(), expectedData1, sizeof(expectedData1)) == 0)
+  {
+    music_loop = -1;
+  }
+  else if (data.size() == sizeof(expectedData2) && memcmp(data.data(), expectedData2, sizeof(expectedData2)) == 0)
+  {
+    music_loop = 1;
+  }
+  else if (data.size() == sizeof(expectedData3) && memcmp(data.data(), expectedData3, sizeof(expectedData3)) == 0)
+  {
+    if (audio.isRunning() == true)
     {
-      play_all_music();
+      usleep(100);
+      if (audio.isRunning() == true)
+      {
+        audio.stopSong();
+        if (current_file_index < file_name_list.size() - 1)
+        {
+          current_file_index++; // 循环播放下一首音乐
+        }
+        else
+        {
+          current_file_index = 0;
+        }
+        std::string music_name = file_name_list[current_file_index];
+        music_name = "/" + music_name;
+        audio.connecttoFS(SD, music_name.c_str());
+        Serial.println("play next music");
+      }
     }
-    else if (data > 0)
+  }
+  else if (data.size() == sizeof(expectedData4) && memcmp(data.data(), expectedData4, sizeof(expectedData4)) == 0)
+  {
+    if (audio.isRunning() == true)
     {
-      play_selected_music(std::stoi(std::string(1, data)));
+      usleep(100);
+      if (audio.isRunning() == true)
+      {
+        audio.stopSong();
+        current_file_index = current_file_index - 1; // 播放上一首音乐
+        if (current_file_index < 0)
+        {
+          current_file_index = file_name_list.size() - 1;
+        }
+        std::string music_name = file_name_list[current_file_index];
+        music_name = "/" + music_name;
+        audio.connecttoFS(SD, music_name.c_str());
+        Serial.println("play previous music");
+      }
     }
+  }
+  else if (data.size() == sizeof(expectedData5) && memcmp(data.data(), expectedData5, sizeof(expectedData5)) == 0)
+  {
+  }
+  else if (data.size() == sizeof(expectedData6) && memcmp(data.data(), expectedData6, sizeof(expectedData6)) == 0)
+  {
+  }
+  else if (data.size() == sizeof(expectedData7) && memcmp(data.data(), expectedData7, sizeof(expectedData7)) == 0)
+  {
+  }
+  else if (data.size() == sizeof(expectedData8) && memcmp(data.data(), expectedData8, sizeof(expectedData8)) == 0)
+  {
+  }
+  else if (data.size() == sizeof(expectedData9) && memcmp(data.data(), expectedData9, sizeof(expectedData9)) == 0)
+  {
+    if (audio.isRunning() == true)
+    {
+      usleep(100);
+      if (audio.isRunning() == true)
+      {
+        if (audio.pauseResume() == true)
+        {
+          Serial.println("pause music");
+        }
+      }
+    }
+  }
+  else if (data.size() == sizeof(expectedData10) && memcmp(data.data(), expectedData10, sizeof(expectedData10)) == 0)
+  {
+    if (audio.isRunning() == false)
+    {
+      usleep(100);
+      if (audio.isRunning() == false)
+      {
+        if (audio.pauseResume() == true)
+        {
+          Serial.println("resume music");
+        }
+      }
+    }
+  }
+  else if (data.size() == sizeof(expectedData11) && memcmp(data.data(), expectedData11, sizeof(expectedData11)) == 0)
+  {
+    if (audio.isRunning() == true)
+    {
+      usleep(100);
+      if (audio.isRunning() == true)
+      {
+        audio.stopSong();
+        Serial.println("stop music");
+      }
+    }
+  }
+  else if (data.size() == sizeof(expectedData12) && memcmp(data.data(), expectedData12, sizeof(expectedData12)) == 0)
+  {
+    if (audio.isRunning() == false)
+    {
+      usleep(100);
+      if (file_name_list.size() > 0 && audio.isRunning() == false)
+      {
+        if (current_file_index >= file_name_list.size())
+        {
+          current_file_index = 0; // 从头开始播放
+        }
+        Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+        std::string music_name = file_name_list[current_file_index];
+        music_name = "/" + music_name;
+        audio.connecttoFS(SD, music_name.c_str());
+      }
+    }
+  }
+  else if (data.size() == sizeof(expectedData13) && memcmp(data.data(), expectedData13, sizeof(expectedData13)) == 0)
+  {
+    music_loop = 2;
+  }
+  else if (data.size() == sizeof(expectedData14) && memcmp(data.data(), expectedData14, sizeof(expectedData14)) == 0)
+  {
+  }
+  else if (data.size() == sizeof(expectedData15) && memcmp(data.data(), expectedData15, sizeof(expectedData15)) == 0)
+  {
+  }
+  else
+  {
+    Serial.println("Unknown data");
   }
 }
 
@@ -179,43 +352,64 @@ void loop()
 
   if (audio.isRunning() == false)
   {
-    usleep(10000);
-    if (file_name_list.size() > 0 && audio.isRunning() == false)
+    usleep(100);
+    if (file_name_list.size() > 0 && audio.isRunning() == false && music_loop != 0)
     {
       if (current_file_index != 0)
       {
         Serial.println("play eos to file");
-        Serial2.println("play eos to file");
       }
       if (current_file_index >= file_name_list.size())
       {
         current_file_index = 0; // 循环播放所有音乐
       }
+
+      if (music_loop == 1)
+      {
+        current_file_index = current_file_index - 1; // 逆序播放
+        if (current_file_index < 0)
+        {
+          current_file_index = file_name_list.size() - 1;
+        }
+        Serial.println("play previous music loop");
+      }
+      else if(music_loop == -1)
+      {
+        current_file_index++;
+        Serial.println("play next music loop");
+      }else if(music_loop == 2)
+      {
+        Serial.println("single loop");
+        // 单曲循环
+      }
+
       Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
-      Serial2.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
       std::string music_name = file_name_list[current_file_index];
       music_name = "/" + music_name;
       audio.connecttoFS(SD, music_name.c_str());
-      current_file_index++;
     }
   }
+
   if (Serial2.available())
   {
-    char number = Serial2.read();
-    Serial.println(number);
-    if (number == '0')
+    uint8_t data = Serial2.read();
+    // Serial.printf("[%d]Received data: %02X\n", __LINE__, data);
+    if (data == START_BYTE)
     {
-
-      Serial.println("aaaaaaaaaaaa");
-      Serial2.write("7");
-      Serial.println("7w");
+      receiving = true;
+      buffer.clear();
     }
-    if (number == '1')
+    else if (data == END_BYTE)
     {
-
-      Serial.println("bbbbbbbbbbb");
-      Serial2.write("6");
-      Serial.println("6w");
+      receiving = false;
+      if (!buffer.empty())
+      {
+        handleData(buffer);
+      }
+    }
+    else if (receiving)
+    {
+      buffer.push_back(data);
     }
   }
 }
