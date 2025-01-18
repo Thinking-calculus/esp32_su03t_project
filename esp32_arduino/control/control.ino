@@ -42,7 +42,9 @@ int current_file_index = 0;
 // 播放流程控制变量
 bool receiving = false;
 std::vector<uint8_t> buffer;
-int music_loop = 0; // -1:顺序播放 1:逆序循环 2:单曲循环
+int music_loop = 0;         // -1:顺序播放 1:逆序循环 2:单曲循环
+int music_volume = 0;       // 音量
+int music_pause_reason = 0; // 音乐暂停原因 0:未暂停 1:语音暂停 2:手动暂停
 
 // sd 卡初始化
 int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_INIT)
@@ -208,14 +210,17 @@ void handleData(const std::vector<uint8_t> &data)
   uint8_t expectedData13[] = {0x00, 0x0D}; // 单曲循环
   uint8_t expectedData14[] = {0x00, 0x0E}; // 今天xx天气怎样
   uint8_t expectedData15[] = {0x00, 0x0F}; // 今天气温是多少
+  uint8_t expectedData16[] = {0x00, 0x11}; // 你好音箱，此时需要暂停音乐
 
   if (data.size() == sizeof(expectedData1) && memcmp(data.data(), expectedData1, sizeof(expectedData1)) == 0)
   {
     music_loop = -1;
+    Serial.printf("music loop status (%d)\r\n", music_loop);
   }
   else if (data.size() == sizeof(expectedData2) && memcmp(data.data(), expectedData2, sizeof(expectedData2)) == 0)
   {
     music_loop = 1;
+    Serial.printf("music loop status(%d)\r\n", music_loop);
   }
   else if (data.size() == sizeof(expectedData3) && memcmp(data.data(), expectedData3, sizeof(expectedData3)) == 0)
   {
@@ -262,15 +267,35 @@ void handleData(const std::vector<uint8_t> &data)
   }
   else if (data.size() == sizeof(expectedData5) && memcmp(data.data(), expectedData5, sizeof(expectedData5)) == 0)
   {
+    music_volume = music_volume + 3;
+    if (music_volume > 21)
+    {
+      music_volume = 21;
+    }
+    audio.setVolume(music_volume); // 0...21
+    Serial.printf("music volume set high ,current volume:%d\r\n", music_volume);
   }
   else if (data.size() == sizeof(expectedData6) && memcmp(data.data(), expectedData6, sizeof(expectedData6)) == 0)
   {
+    music_volume = music_volume - 3;
+    if (music_volume < 0)
+    {
+      music_volume = 0;
+    }
+    audio.setVolume(music_volume); // 0...21
+    Serial.printf("music volume set low ,current volume:%d\r\n", music_volume);
   }
   else if (data.size() == sizeof(expectedData7) && memcmp(data.data(), expectedData7, sizeof(expectedData7)) == 0)
   {
+    music_volume = 21;
+    audio.setVolume(music_volume); // 0...21
+    Serial.printf("music volume set max ,current volume:%d\r\n", music_volume);
   }
   else if (data.size() == sizeof(expectedData8) && memcmp(data.data(), expectedData8, sizeof(expectedData8)) == 0)
   {
+    music_volume = 0;
+    audio.setVolume(music_volume); // 0...21
+    Serial.printf("music volume set min ,current volume:%d\r\n", music_volume);
   }
   else if (data.size() == sizeof(expectedData9) && memcmp(data.data(), expectedData9, sizeof(expectedData9)) == 0)
   {
@@ -308,6 +333,7 @@ void handleData(const std::vector<uint8_t> &data)
       if (audio.isRunning() == true)
       {
         audio.stopSong();
+        music_loop = 0;
         Serial.println("stop music");
       }
     }
@@ -333,12 +359,42 @@ void handleData(const std::vector<uint8_t> &data)
   else if (data.size() == sizeof(expectedData13) && memcmp(data.data(), expectedData13, sizeof(expectedData13)) == 0)
   {
     music_loop = 2;
+    Serial.printf("music loop status(%d)\r\n", music_loop);
   }
   else if (data.size() == sizeof(expectedData14) && memcmp(data.data(), expectedData14, sizeof(expectedData14)) == 0)
   {
+    // 需要网络请求获取天气信息
   }
   else if (data.size() == sizeof(expectedData15) && memcmp(data.data(), expectedData15, sizeof(expectedData15)) == 0)
   {
+    // 需要网络请求获取温度信息
+  }
+  else if (data.size() == sizeof(expectedData16) && memcmp(data.data(), expectedData16, sizeof(expectedData16)) == 0) // 只要有语音输入，就暂停音乐,但恢复的时机还需要考虑
+  {
+    if (audio.isRunning() == true)
+    {
+      usleep(100);
+      if (audio.isRunning() == true)
+      {
+        if (audio.pauseResume() == true)
+        {
+          music_pause_reason = 1;
+          Serial.printf("Hello to pause music(%d)\r\n", music_pause_reason);
+        }
+      }
+    }
+    // else
+    // {
+    //   usleep(100);
+    //   if (audio.isRunning() == false && music_pause_reason == 1)
+    //   {
+    //     if (audio.pauseResume() == true)
+    //     {
+    //       music_pause_reason = 0;
+    //       Serial.println("Hello to resume music(%d)", music_pause_reason);
+    //     }
+    //   }
+    // }
   }
   else
   {
@@ -353,7 +409,7 @@ void loop()
   if (audio.isRunning() == false)
   {
     usleep(100);
-    if (file_name_list.size() > 0 && audio.isRunning() == false && music_loop != 0)
+    if (file_name_list.size() > 0 && audio.isRunning() == false && music_loop != 0 && music_pause_reason == 0)
     {
       if (current_file_index != 0)
       {
@@ -373,16 +429,21 @@ void loop()
         }
         Serial.println("play previous music loop");
       }
-      else if(music_loop == -1)
+      else if (music_loop == -1)
       {
         current_file_index++;
+        if (current_file_index >= file_name_list.size())
+        {
+          current_file_index = 0;
+        }
         Serial.println("play next music loop");
-      }else if(music_loop == 2)
+      }
+      else if (music_loop == 2)
       {
         Serial.println("single loop");
         // 单曲循环
       }
-
+      Serial.printf("current loop status:%d\r\n", music_loop);
       Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
       std::string music_name = file_name_list[current_file_index];
       music_name = "/" + music_name;
@@ -390,6 +451,7 @@ void loop()
     }
   }
 
+  // 处理串口2接收到的数据(语音识别模块发送的数据)
   if (Serial2.available())
   {
     uint8_t data = Serial2.read();
