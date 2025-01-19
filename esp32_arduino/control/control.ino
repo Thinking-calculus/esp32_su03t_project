@@ -44,7 +44,8 @@ bool receiving = false;
 std::vector<uint8_t> buffer;
 int music_loop = 0;         // -1:顺序播放 1:逆序循环 2:单曲循环
 int music_volume = 0;       // 音量
-int music_pause_reason = 0; // 音乐暂停原因 0:未暂停 1:语音暂停 2:手动暂停
+int music_pause_reason = 2; // 音乐暂停原因 0:未暂停 1:语音暂停 2:停止播放 3:手动暂停
+int music_pause_delay_count = 0;
 
 // sd 卡初始化
 int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_INIT)
@@ -71,7 +72,8 @@ int sd_init(int SD_CS_INIT, int SPI_SCK_INIT, int SPI_MISO_INIT, int SPI_MOSI_IN
 void audio_init(int I2S_DOUT_INIT, int I2S_BCLK_INIT, int I2S_LRC_INIT)
 {
   audio.setPinout(I2S_BCLK_INIT, I2S_LRC_INIT, I2S_DOUT_INIT);
-  audio.setVolume(10); // 0...21
+  music_volume = 10;
+  audio.setVolume(music_volume); // 0...21
 }
 
 // 获取音频文件列表
@@ -139,51 +141,6 @@ void setup()
   }
 }
 
-// void play_all_music()
-// {
-//   if (file_name_list.size() > 0)
-//   {
-//     if (current_file_index >= file_name_list.size())
-//     {
-//       current_file_index = 0; // 循环播放所有音乐
-//     }
-//     Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
-//     std::string music_name = file_name_list[current_file_index];
-//     music_name = "/" + music_name;
-//     audio.connecttoFS(SD, music_name.c_str());
-//     current_file_index++;
-//   }
-// }
-
-// void play_selected_music(int index)
-// {
-//   if (index >= 0 && index < file_name_list.size())
-//   {
-//     Serial.printf("play music file:%s \r\n", file_name_list[index].c_str());
-//     std::string music_name = file_name_list[index];
-//     music_name = "/" + music_name;
-//     audio.connecttoFS(SD, music_name.c_str());
-//   }
-// }
-
-// // 语音识别解析
-// void tts_sovle()
-// {
-//   if (Serial2.available())
-//   {
-//     char data = Serial2.read(); // 暂时只接受字符信息
-//     Serial.printf("get data(%s) from tts \r\n", data);
-//     if (data == '-1')
-//     {
-//       play_all_music();
-//     }
-//     else if (data > 0)
-//     {
-//       // play_selected_music(std::stoi(std::string(1, data)));
-//     }
-//   }
-// }
-
 void handleData(const std::vector<uint8_t> &data)
 {
   // // 处理接收到的数据
@@ -216,14 +173,31 @@ void handleData(const std::vector<uint8_t> &data)
   {
     music_loop = -1;
     Serial.printf("music loop status (%d)\r\n", music_loop);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData2) && memcmp(data.data(), expectedData2, sizeof(expectedData2)) == 0)
   {
     music_loop = 1;
     Serial.printf("music loop status(%d)\r\n", music_loop);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData3) && memcmp(data.data(), expectedData3, sizeof(expectedData3)) == 0)
   {
+
     if (audio.isRunning() == true)
     {
       usleep(100);
@@ -244,9 +218,33 @@ void handleData(const std::vector<uint8_t> &data)
         Serial.println("play next music");
       }
     }
+    else
+    {
+      usleep(100);
+      if (audio.isRunning() == false)
+      {
+        if (current_file_index < file_name_list.size() - 1)
+        {
+          current_file_index++; // 循环播放下一首音乐
+        }
+        else
+        {
+          current_file_index = 0;
+        }
+        std::string music_name = file_name_list[current_file_index];
+        music_name = "/" + music_name;
+        audio.connecttoFS(SD, music_name.c_str());
+        Serial.println("play next music");
+      }
+    }
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+    }
   }
   else if (data.size() == sizeof(expectedData4) && memcmp(data.data(), expectedData4, sizeof(expectedData4)) == 0)
   {
+
     if (audio.isRunning() == true)
     {
       usleep(100);
@@ -264,38 +262,90 @@ void handleData(const std::vector<uint8_t> &data)
         Serial.println("play previous music");
       }
     }
+    else
+    {
+      usleep(100);
+      if (audio.isRunning() == false)
+      {
+        current_file_index = current_file_index - 1; // 播放上一首音乐
+        if (current_file_index < 0)
+        {
+          current_file_index = file_name_list.size() - 1;
+        }
+        std::string music_name = file_name_list[current_file_index];
+        music_name = "/" + music_name;
+        audio.connecttoFS(SD, music_name.c_str());
+        Serial.println("play previous music");
+      }
+    }
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+    }
   }
   else if (data.size() == sizeof(expectedData5) && memcmp(data.data(), expectedData5, sizeof(expectedData5)) == 0)
   {
-    music_volume = music_volume + 3;
+    music_volume = music_volume + 6;
     if (music_volume > 21)
     {
       music_volume = 21;
     }
     audio.setVolume(music_volume); // 0...21
     Serial.printf("music volume set high ,current volume:%d\r\n", music_volume);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData6) && memcmp(data.data(), expectedData6, sizeof(expectedData6)) == 0)
   {
-    music_volume = music_volume - 3;
+    music_volume = music_volume - 4 ;
     if (music_volume < 0)
     {
       music_volume = 0;
     }
     audio.setVolume(music_volume); // 0...21
     Serial.printf("music volume set low ,current volume:%d\r\n", music_volume);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData7) && memcmp(data.data(), expectedData7, sizeof(expectedData7)) == 0)
   {
     music_volume = 21;
     audio.setVolume(music_volume); // 0...21
     Serial.printf("music volume set max ,current volume:%d\r\n", music_volume);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData8) && memcmp(data.data(), expectedData8, sizeof(expectedData8)) == 0)
   {
     music_volume = 0;
     audio.setVolume(music_volume); // 0...21
     Serial.printf("music volume set min ,current volume:%d\r\n", music_volume);
+    if (music_pause_reason != 2)
+    {
+      music_pause_reason = 0;
+      if (audio.pauseResume() == true)
+      {
+        Serial.printf("resume music(%d)\r\n", music_pause_reason);
+      }
+    }
   }
   else if (data.size() == sizeof(expectedData9) && memcmp(data.data(), expectedData9, sizeof(expectedData9)) == 0)
   {
@@ -307,6 +357,7 @@ void handleData(const std::vector<uint8_t> &data)
         if (audio.pauseResume() == true)
         {
           Serial.println("pause music");
+          music_pause_reason = 3;
         }
       }
     }
@@ -316,11 +367,12 @@ void handleData(const std::vector<uint8_t> &data)
     if (audio.isRunning() == false)
     {
       usleep(100);
-      if (audio.isRunning() == false)
+      if (audio.isRunning() == false && music_pause_reason != 2)
       {
         if (audio.pauseResume() == true)
         {
           Serial.println("resume music");
+          music_pause_reason = 0;
         }
       }
     }
@@ -334,6 +386,17 @@ void handleData(const std::vector<uint8_t> &data)
       {
         audio.stopSong();
         music_loop = 0;
+        music_pause_reason = 2;
+        Serial.println("stop music");
+      }
+    }
+    else
+    {
+      usleep(100);
+      if (audio.isRunning() == false)
+      {
+        music_loop = 0;
+        music_pause_reason = 2;
         Serial.println("stop music");
       }
     }
@@ -349,10 +412,11 @@ void handleData(const std::vector<uint8_t> &data)
         {
           current_file_index = 0; // 从头开始播放
         }
-        Serial.printf("play music file:%s \r\n", file_name_list[current_file_index].c_str());
+        Serial.printf("start play music file:%s \r\n", file_name_list[current_file_index].c_str());
         std::string music_name = file_name_list[current_file_index];
         music_name = "/" + music_name;
         audio.connecttoFS(SD, music_name.c_str());
+        music_pause_reason = 0;
       }
     }
   }
@@ -379,22 +443,10 @@ void handleData(const std::vector<uint8_t> &data)
         if (audio.pauseResume() == true)
         {
           music_pause_reason = 1;
-          Serial.printf("Hello to pause music(%d)\r\n", music_pause_reason);
+          Serial.printf("Hello device to pause music(%d)\r\n", music_pause_reason);
         }
       }
     }
-    // else
-    // {
-    //   usleep(100);
-    //   if (audio.isRunning() == false && music_pause_reason == 1)
-    //   {
-    //     if (audio.pauseResume() == true)
-    //     {
-    //       music_pause_reason = 0;
-    //       Serial.println("Hello to resume music(%d)", music_pause_reason);
-    //     }
-    //   }
-    // }
   }
   else
   {
@@ -409,6 +461,19 @@ void loop()
   if (audio.isRunning() == false)
   {
     usleep(100);
+    if (music_pause_reason == 1)
+    {
+      music_pause_delay_count++;
+      if (music_pause_delay_count > 100000) // 10s
+      {
+        music_pause_delay_count = 0;
+        if (audio.pauseResume() == true)
+        {
+          music_pause_reason = 0;
+          Serial.printf("Hello device delay to resume music(%d)\r\n", music_pause_reason);
+        }
+      }
+    }
     if (file_name_list.size() > 0 && audio.isRunning() == false && music_loop != 0 && music_pause_reason == 0)
     {
       if (current_file_index != 0)
