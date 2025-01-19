@@ -31,7 +31,7 @@ MAX98357 需要单独连接对应喇叭
 ESP32 需要单独外接micro usb 作为供电和 serial1 的通信
 
 连接效果如图
-![连接示例](\连接图.jpg)
+![连接示例](https://github.com/Thinking-calculus/esp32_su03t_project/blob/main/%E8%BF%9E%E6%8E%A5%E5%9B%BE.jpg?raw=true)
 
 ### 软件
 arduino库: [audio编解码库(ESP32-audioI2S Public)](https://github.com/schreibfaul1/ESP32-audioI2S/)
