@@ -13,7 +13,7 @@ HardwareSerial SerialPort(2); // use UART2
 #include <unistd.h>
 
 // sd卡相关引脚
-#define SD_CS 5
+#define SD_CS 5 
 #define SPI_MOSI 23
 #define SPI_MISO 19
 #define SPI_SCK 18
@@ -76,6 +76,14 @@ void audio_init(int I2S_DOUT_INIT, int I2S_BCLK_INIT, int I2S_LRC_INIT)
   audio.setVolume(music_volume); // 0...21
 }
 
+//c++ 部分版本无法支持 ends_with,使用compare 实现如下
+bool ends_with(const std::string& str, const std::string& suffix) {
+    if (str.length() < suffix.length()) {
+        return false;
+    }
+    return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
+}
+
 // 获取音频文件列表
 int get_audio_list()
 {
@@ -99,7 +107,7 @@ int get_audio_list()
   {
     // 筛选出mp3文件
     std::string file_name(file.name());
-    if (file_name.ends_with(".mp3") && file.size() > 0)
+    if (ends_with(file_name,".mp3") && file.size() > 0)
     {
       Serial.printf("get mp3 file name:%s,file size %d\n", file.name(), file.size());
       file_name_list.push_back(file_name);
